@@ -1,25 +1,22 @@
 'use strict';
 
-// Load modules
-
+const Boom = require('boom');
+const Code = require('code');
 const Hapi = require('hapi');
 const Hoek = require('hoek');
 const Lab = require('lab');
 
-
-// Declare internals
-
-const internals = {};
+const Helpers = require('./helpers');
 
 
-// Test shortcuts
+const internals = {
+    cookieRx: /(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/
+};
+
 
 const lab = exports.lab = Lab.script();
-const { describe, it, expect } = lab;
-
-
-// Helpers
-const Helpers = require('./helpers');
+const { describe, it } = lab;
+const { expect } = Code;
 
 
 describe('scheme', () => {
@@ -32,7 +29,7 @@ describe('scheme', () => {
         expect(() => {
 
             server.auth.strategy('session', 'cookie', {});
-        }).to.throw(Error);
+        }).to.throw();
     });
 
     it('passes with a password configured', async () => {
@@ -42,7 +39,7 @@ describe('scheme', () => {
 
         expect(() => {
 
-            server.auth.strategy('session', 'cookie', { password: 'password-should-be-32-characters' });
+            server.auth.strategy('session', 'cookie', { cookie: { password: 'password-should-be-32-characters' } });
             server.auth.default('session');
         }).to.not.throw();
     });
@@ -54,7 +51,7 @@ describe('scheme', () => {
 
         expect(() => {
 
-            server.auth.strategy('session', 'cookie', { password: Buffer.from('foobar') });
+            server.auth.strategy('session', 'cookie', { cookie: { password: Buffer.from('foobar') } });
         }).to.not.throw();
     });
 
@@ -66,7 +63,7 @@ describe('scheme', () => {
         expect(() => {
 
             server.auth.strategy('session', 'cookie', { validateFunc: 'not a function' });
-        }).to.throw(Error);
+        }).to.throw();
     });
 
     it('fails if keepAlive is configured but not ttl', async () => {
@@ -77,10 +74,12 @@ describe('scheme', () => {
         expect(() => {
 
             server.auth.strategy('session', 'cookie', {
-                password: 'password-should-be-32-characters',
-                keepAlive: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    keepAlive: true
+                }
             });
-        }).to.throw(Error);
+        }).to.throw();
     });
 
     it('authenticates a request', async () => {
@@ -89,11 +88,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('session', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                clearInvalid: true,
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -116,7 +117,7 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -149,11 +150,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -174,7 +177,7 @@ describe('scheme', () => {
         server.route({
             method: 'GET',
             path: '/multiple',
-            config: {
+            options: {
                 auth: {
                     mode: 'try',
                     strategies: ['default', 'simple']
@@ -199,11 +202,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -219,7 +224,7 @@ describe('scheme', () => {
 
         server.route({
             method: 'GET', path: '/login/{user}',
-            config: {
+            options: {
                 auth: { mode: 'try' },
                 handler: function (request, h) {
 
@@ -243,13 +248,13 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/logout', headers: { cookie: 'special=' + cookie[1] } });
 
         expect(res2.statusCode).to.equal(200);
         expect(res2.result).to.equal('logged-out');
-        expect(res2.headers['set-cookie'][0]).to.equal('special=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict; Domain=example.com; Path=/');
+        expect(res2.headers['set-cookie'][0]).to.equal('special=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict; Domain=example.com');
     });
 
     it('fails a request with invalid session', async () => {
@@ -258,11 +263,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -284,11 +291,10 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
-
-        expect(res2.headers['set-cookie'][0]).to.equal('special=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict; Domain=example.com; Path=/');
+        expect(res2.headers['set-cookie'][0]).to.equal('special=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict; Domain=example.com');
         expect(res2.statusCode).to.equal(401);
     });
 
@@ -298,11 +304,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: false,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: false,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -324,7 +332,7 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -338,10 +346,12 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            cookie: 'special',
-            clearInvalid: true
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                name: 'special'
+            }
         });
         server.auth.default('default');
 
@@ -353,7 +363,7 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -367,10 +377,12 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 throw new Error('boom');
@@ -386,11 +398,87 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
         expect(res2.statusCode).to.equal(401);
+    });
+
+    it('uauthorized error in validation function fails over to subsequent authentication scheme', async () => {
+
+        const plugin = {
+            name: 'bogusAuth',
+            register: (server, options) => {
+
+                const schema = () => {
+
+                    return {
+                        authenticate: (request, h) => {
+
+                            return h.authenticated({ credentials: { user: 'bogus-user' } });
+                        }
+                    };
+                };
+
+                server.auth.scheme('bogus', schema);
+            }
+        };
+
+        const server = Hapi.server();
+        await server.register(require('../'));
+        await server.register(plugin);
+        server.auth.strategy('first', 'cookie', {
+            cookie: {
+                password: 'password-should-be-32-characters',
+                ttl: 60 * 1000,
+                name: 'first'
+            },
+            validateFunc: function (request, session) {
+
+                throw Boom.unauthorized(null, 'first');
+            }
+        });
+
+        server.auth.strategy('second', 'bogus');
+
+        server.route({
+            method: 'GET', path: '/login/{user}',
+            options: {
+                handler: function (request, h) {
+
+                    request.cookieAuth.set({ user: request.params.user });
+                    return h.response(request.params.user);
+                }
+            }
+        });
+
+        server.route({
+            method: 'GET', path: '/resource',
+            options: {
+                auth: { mode: 'required', strategies: ['first', 'second'] },
+                handler: function (request, h) {
+
+                    return h.response('valid-resource');
+                }
+            }
+        });
+
+        const res = await server.inject('/login/bob');
+
+        expect(res.result).to.equal('bob');
+        const header = res.headers['set-cookie'];
+        expect(header.length).to.equal(1);
+        expect(header[0]).to.contain('Max-Age=60');
+        const cookie = header[0].match(internals.cookieRx);
+
+        const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'first=' + cookie[1] } });
+
+        expect(res2.statusCode).to.equal(200);
+        expect(res2.headers['set-cookie']).to.not.exist();
+        expect(res2.result).to.equal('valid-resource');
+        expect(res2.request.auth.isAuthenticated).to.be.true();
+        expect(res2.request.auth.credentials.user).to.equal('bogus-user');
     });
 
     it('authenticates a request (no ttl)', async () => {
@@ -399,10 +487,12 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                domain: 'example.com',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 const override = Hoek.clone(session);
@@ -418,7 +508,7 @@ describe('scheme', () => {
 
         server.route({
             method: 'GET', path: '/login/{user}',
-            config: {
+            options: {
                 auth: { mode: 'try' },
                 handler: function (request, h) {
 
@@ -442,12 +532,14 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            path: '/example-path',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                path: '/example-path',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 return {
@@ -465,7 +557,7 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -479,12 +571,14 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            path: '/subpath',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                path: '/subpath',
+                name: 'special'
+            },
             validateFunc: function (request, session) {
 
                 return {
@@ -496,7 +590,7 @@ describe('scheme', () => {
 
         server.route({
             method: 'GET', path: '/subpath/login/{user}',
-            config: {
+            options: {
                 auth: { mode: 'try' },
                 handler: function (request, h) {
 
@@ -519,7 +613,7 @@ describe('scheme', () => {
         const header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
         expect(header[0]).to.contain('Path=/subpath');
 
         const res2 = await server.inject({ method: 'GET', url: '/subpath/resource', headers: { cookie: 'special=' + cookie[1] } });
@@ -534,11 +628,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             keepAlive: true
         });
         server.auth.default('default');
@@ -550,7 +646,7 @@ describe('scheme', () => {
         let header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -566,11 +662,13 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            domain: 'example.com',
-            cookie: 'special',
-            clearInvalid: true,
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000,
+                domain: 'example.com',
+                name: 'special'
+            },
             keepAlive: true,
             validateFunc: function (request, session) {
 
@@ -593,7 +691,7 @@ describe('scheme', () => {
         let header = res.headers['set-cookie'];
         expect(header.length).to.equal(1);
         expect(header[0]).to.contain('Max-Age=60');
-        const cookie = header[0].match(/(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/);
+        const cookie = header[0].match(internals.cookieRx);
 
         const res2 = await server.inject({ method: 'GET', url: '/resource', headers: { cookie: 'special=' + cookie[1] } });
 
@@ -605,23 +703,6 @@ describe('scheme', () => {
         expect(header[0]).to.contain('Max-Age=60');
     });
 
-    it('errors if ignoreIfDecorated is false and the request object is already decorated', async () => {
-
-        const password = 'password-should-be-32-characters';
-        const ignoreIfDecorated = false;
-        const options = { password, ignoreIfDecorated };
-
-        const server = Hapi.server();
-        await server.register(require('../'));
-
-        server.auth.strategy('default', 'cookie', options);
-
-        expect(() => {
-
-            server.auth.strategy('default', 'cookie', options);
-        }).to.throw(Error);
-    });
-
     describe('set()', () => {
 
         it('errors on missing session in set()', async () => {
@@ -630,16 +711,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -666,16 +749,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -695,7 +780,7 @@ describe('scheme', () => {
 
             const res = await server.inject('/login/steve');
 
-            const pattern = /(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/;
+            const pattern = internals.cookieRx;
             expect(res.result).to.equal('steve');
             const header = res.headers['set-cookie'];
             expect(header.length).to.equal(1);
@@ -713,16 +798,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -749,16 +836,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -785,16 +874,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -824,16 +915,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -853,7 +946,7 @@ describe('scheme', () => {
 
             const res = await server.inject('/login/steve');
 
-            const pattern = /(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/;
+            const pattern = internals.cookieRx;
             expect(res.result).to.equal('steve');
             const header = res.headers['set-cookie'];
             expect(header.length).to.equal(1);
@@ -871,16 +964,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -907,16 +1002,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -943,16 +1040,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 60 * 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -982,16 +1081,18 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 1000,
-                cookie: 'special',
-                clearInvalid: true
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    clearInvalid: true,
+                    ttl: 1000,
+                    name: 'special'
+                }
             });
             server.auth.default('default');
 
             server.route({
                 method: 'GET', path: '/login/{user}',
-                config: {
+                options: {
                     auth: { mode: 'try' },
                     handler: function (request, h) {
 
@@ -1012,7 +1113,7 @@ describe('scheme', () => {
 
             const res = await server.inject('/login/steve');
 
-            const pattern = /(?:[^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)\s*=\s*(?:([^\x00-\x20\"\,\;\\\x7F]*))/;
+            const pattern = internals.cookieRx;
             expect(res.result).to.equal('steve');
             const header = res.headers['set-cookie'];
             expect(header.length).to.equal(1);
@@ -1033,8 +1134,10 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login',
                 appendNext: true
             });
@@ -1059,8 +1162,10 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: (request) => 'http://example.com/login?widget=' + request.query.widget,
                 appendNext: true
             });
@@ -1085,8 +1190,10 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: false,
                 appendNext: true
             });
@@ -1106,14 +1213,50 @@ describe('scheme', () => {
             expect(res.statusCode).to.equal(401);
         });
 
+        it('skips when redirectTo is set to function that returns falsey value', async () => {
+
+            const server = Hapi.server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: () => false,
+                appendNext: true
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET',
+                path: '/',
+                options: {
+                    plugins: {
+                        'hapi-auth-cookie': {}
+                    },
+                    handler: function (request, h) {
+
+                        return h.response('never');
+                    }
+                }
+            });
+
+            const res = await server.inject('/');
+
+            expect(res.statusCode).to.equal(401);
+        });
+
         it('skips when route override', async () => {
 
             const server = Hapi.server();
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login',
                 appendNext: true
             });
@@ -1126,7 +1269,7 @@ describe('scheme', () => {
 
                     return h.response('never');
                 },
-                config: {
+                options: {
                     plugins: {
                         'hapi-auth-cookie': {
                             redirectTo: false
@@ -1140,55 +1283,25 @@ describe('scheme', () => {
             expect(res.statusCode).to.equal(401);
         });
 
-        it('skips when redirectOnTry is false in try mode', async () => {
-
-            const server = Hapi.server();
-            await server.register(require('../'));
-
-            server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
-                redirectOnTry: false,
-                redirectTo: 'http://example.com/login',
-                appendNext: true
-            });
-            server.auth.default({
-                mode: 'try',
-                strategy: 'default'
-            });
-
-            server.route({
-                method: 'GET',
-                path: '/',
-                handler: function (request, h) {
-
-                    return h.response(request.auth.isAuthenticated);
-                }
-            });
-
-            const res = await server.inject('/');
-
-            expect(res.statusCode).to.equal(200);
-            expect(res.result).to.equal(false);
-        });
-
         it('sends to login page (uri with query)', async () => {
 
             const server = Hapi.server();
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login?mode=1',
                 appendNext: true
             });
             server.auth.default('default');
 
             server.route({
-                method: 'GET', path: '/', handler: function (request, reply) {
+                method: 'GET', path: '/', handler: function () {
 
-                    return reply('never');
+                    return 'never';
                 }
             });
 
@@ -1204,8 +1317,10 @@ describe('scheme', () => {
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login?mode=1',
                 appendNext: false
             });
@@ -1224,14 +1339,114 @@ describe('scheme', () => {
             expect(res.headers.location).to.equal('http://example.com/login?mode=1');
         });
 
+        it('uses the updated path by default when onRequest re-routes', async () => {
+
+            const server = new Hapi.Server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: 'http://example.com/login?mode=1',
+                appendNext: true
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET', path: '/', handler: function (request, h) {
+
+                    return h.response('never');
+                }
+            });
+
+            server.ext('onRequest', (request, h) => {
+
+                request.setUrl('/');
+
+                return h.continue;
+            });
+
+            const res = await server.inject('/foo?bar=baz');
+
+            expect(res.statusCode).to.equal(302);
+            expect(res.headers.location).to.equal('http://example.com/login?mode=1&next=%2F');
+        });
+
+        it('retains the original path for appendNext when onRequest re-routes when raw is set to true', async () => {
+
+            const server = new Hapi.Server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: 'http://example.com/login?mode=1',
+                appendNext: { raw: true }
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET', path: '/', handler: function (request, h) {
+
+                    return h.response('never');
+                }
+            });
+
+            server.ext('onRequest', (request, h) => {
+
+                request.setUrl('/');
+
+                return h.continue;
+            });
+
+            const res = await server.inject('/foo?bar=baz');
+
+            expect(res.statusCode).to.equal(302);
+            expect(res.headers.location).to.equal('http://example.com/login?mode=1&next=%2Ffoo%3Fbar%3Dbaz');
+        });
+
+        it('sets the appendNext parameter to the value defined within the object', async () => {
+
+            const server = new Hapi.Server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: 'http://example.com/login?mode=1',
+                appendNext: { name: 'return_to' }
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET', path: '/foo', handler: function (request, reply) {
+
+                    return reply('never');
+                }
+            });
+
+            const res = await server.inject('/foo?bar=baz');
+
+            expect(res.statusCode).to.equal(302);
+            expect(res.headers.location).to.equal('http://example.com/login?mode=1&return_to=%2Ffoo%3Fbar%3Dbaz');
+        });
+
         it('appends the custom query when appendNext is string', async () => {
 
             const server = Hapi.server();
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login?mode=1',
                 appendNext: 'done'
             });
@@ -1250,21 +1465,51 @@ describe('scheme', () => {
             expect(res.headers.location).to.equal('http://example.com/login?mode=1&done=%2F');
         });
 
-        it('redirect on try', async () => {
+        it('redirect for required mode', async () => {
 
             const server = Hapi.server();
             await server.register(require('../'));
 
             server.auth.strategy('default', 'cookie', {
-                password: 'password-should-be-32-characters',
-                ttl: 60 * 1000,
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
                 redirectTo: 'http://example.com/login',
                 appendNext: true
             });
             server.auth.default('default');
 
             server.route({
-                method: 'GET', path: '/', config: { auth: { mode: 'try' } }, handler: function (request, h) {
+                method: 'GET', path: '/', options: { auth: { mode: 'required' } }, handler: function (request, h) {
+
+                    return h.response('required');
+                }
+            });
+
+            const res = await server.inject('/');
+
+            expect(res.statusCode).to.equal(302);
+            expect(res.headers.location).to.equal('http://example.com/login?next=%2F');
+        });
+
+        it('skips redirect for try mode', async () => {
+
+            const server = Hapi.server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: 'http://example.com/login',
+                appendNext: true
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET', path: '/', options: { auth: { mode: 'try' } }, handler: function (request, h) {
 
                     return h.response('try');
                 }
@@ -1272,7 +1517,34 @@ describe('scheme', () => {
 
             const res = await server.inject('/');
 
-            expect(res.statusCode).to.equal(302);
+            expect(res.statusCode).to.equal(200);
+        });
+
+        it('skips redirect for optional mode', async () => {
+
+            const server = Hapi.server();
+            await server.register(require('../'));
+
+            server.auth.strategy('default', 'cookie', {
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    ttl: 60 * 1000
+                },
+                redirectTo: 'http://example.com/login',
+                appendNext: true
+            });
+            server.auth.default('default');
+
+            server.route({
+                method: 'GET', path: '/', options: { auth: { mode: 'optional' } }, handler: function (request, h) {
+
+                    return h.response('optional');
+                }
+            });
+
+            const res = await server.inject('/');
+
+            expect(res.statusCode).to.equal(200);
         });
     });
 
@@ -1282,9 +1554,11 @@ describe('scheme', () => {
         await server.register(require('../'));
 
         server.auth.strategy('default', 'cookie', {
-            password: 'password-should-be-32-characters',
-            ttl: 60 * 1000,
-            clearInvalid: true
+            cookie: {
+                password: 'password-should-be-32-characters',
+                clearInvalid: true,
+                ttl: 60 * 1000
+            }
         });
         server.auth.default('default');
 
@@ -1295,7 +1569,7 @@ describe('scheme', () => {
         const res = await server.inject({ url: '/', headers: { cookie: 'sid=123456' } });
 
         expect(res.statusCode).to.equal(401);
-        expect(res.headers['set-cookie'][0]).to.equal('sid=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict; Path=/');
+        expect(res.headers['set-cookie'][0]).to.equal('sid=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict');
     });
 
     it('supports many strategies', async () => {
@@ -1306,9 +1580,11 @@ describe('scheme', () => {
         expect(() => {
 
             const options = {
-                cookie: 'cookieAuth',
-                requestDecoratorName: 'cookieAuth',
-                password: 'password-should-be-32-characters'
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    name: 'cookieAuth'
+                },
+                requestDecoratorName: 'cookieAuth'
             };
             server.auth.strategy('default', 'cookie', options);
         }).to.not.throw();
@@ -1316,12 +1592,13 @@ describe('scheme', () => {
         expect(() => {
 
             const options = {
-                cookie: 'anotherCookieAuth',
-                requestDecoratorName: 'anotherCookieAuth',
-                password: 'password-should-be-32-characters'
+                cookie: {
+                    password: 'password-should-be-32-characters',
+                    name: 'anotherCookieAuth'
+                },
+                requestDecoratorName: 'anotherCookieAuth'
             };
             server.auth.strategy('notDefault', 'cookie', options);
         }).to.not.throw();
     });
-
 });

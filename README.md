@@ -4,7 +4,7 @@
 
 [![Build Status](https://secure.travis-ci.org/hapijs/hapi-auth-cookie.png)](http://travis-ci.org/hapijs/hapi-auth-cookie)
 
-Lead Maintainer: [James Weston](https://github.com/jaw187)
+Lead Maintainer: [Eran Hammer](https://github.com/hueniverse)
 
 Cookie authentication provides simple cookie-based session management. The user has to be
 authenticated via other means, typically a web form, and upon successful authentication
@@ -19,30 +19,33 @@ It is important to remember a couple of things:
 
 The `'cookie`' scheme takes the following options:
 
-- `cookie` - the cookie name. Defaults to `'sid'`.
-- `password` - used for Iron cookie encoding. Should be at least 32 characters long.
-- `ttl` - sets the cookie expires time in milliseconds. Defaults to single browser session (ends
-  when browser closes). Required when `keepAlive` is `true`.
-- `domain` - sets the cookie Domain value. Defaults to none.
-- `path` - sets the cookie path value. Defaults to `/`.
-- `clearInvalid` - if `true`, any authentication cookie that fails validation will be marked as
-  expired in the response and cleared. Defaults to `false`.
+- `cookie` - an object with the following:
+  - `name` - the cookie name. Defaults to `'sid'`.
+  - `password` - used for Iron cookie encoding. Should be at least 32 characters long.
+  - `ttl` - sets the cookie expires time in milliseconds. Defaults to single browser session (ends
+    when browser closes). Required when `keepAlive` is `true`.
+  - `domain` - sets the cookie Domain value. Defaults to none.
+  - `path` - sets the cookie path value. Defaults to none.
+  - `clearInvalid` - if `true`, any authentication cookie that fails validation will be marked as
+    expired in the response and cleared. Defaults to `false`.
+  - `isSameSite` - if `false` omitted. Other options `Strict` or `Lax`. Defaults to `Strict`.
+  - `isSecure` - if `false`, the cookie is allowed to be transmitted over insecure connections which
+    exposes it to attacks. Defaults to `true`.
+  - `isHttpOnly` - if `false`, the cookie will not include the 'HttpOnly' flag. Defaults to `true`.
 - `keepAlive` - if `true`, automatically sets the session cookie after validation to extend the
   current session for a new `ttl` duration. Defaults to `false`.
-- `isSameSite` - if `false` omitted. Other options `Strict` or `Lax`. Defaults to `Strict`.
-- `isSecure` - if `false`, the cookie is allowed to be transmitted over insecure connections which
-  exposes it to attacks. Defaults to `true`.
-- `isHttpOnly` - if `false`, the cookie will not include the 'HttpOnly' flag. Defaults to `true`.
-- `redirectTo` - optional login URI to redirect unauthenticated requests to. Note that using
-  `redirectTo` with authentication mode `'try'` will cause the protected endpoint to always
-  redirect, voiding `'try'` mode. To set an individual route to use or disable redirections, use
-  the route `plugins` config (`{ config: { plugins: { 'hapi-auth-cookie': { redirectTo: false } } } }`).
+- `redirectTo` - optional login URI or function `function(request)` that returns a URI to redirect unauthenticated requests to. Note that it will only
+  trigger when the authentication mode is `'required'`. To enable or disable redirections for a specific route,
+  set the route `plugins` config (`{ options: { plugins: { 'hapi-auth-cookie': { redirectTo: false } } } }`).
   Defaults to no redirection.
-- `appendNext` - if `true` and `redirectTo` is `true`, appends the current request path to the
-  query component of the `redirectTo` URI using the parameter name `'next'`. Set to a string to use
-  a different parameter name. Defaults to `false`.
-- `redirectOnTry` - if `false` and route authentication mode is `'try'`, authentication errors will
-  not trigger a redirection. Defaults to `true`;
+- `appendNext` - if `redirectTo` is `true`, can be a boolean, string, or object. Defaults to `false`.
+    - if set to `true`, a string, or an object, appends the current request path to the query component
+      of the `redirectTo` URI
+    - set to a string value or set the `name` property in an object to define the parameter name.
+      defaults to `'next'`
+    - set the `raw` property of the object to `true` to determine the current request path based on
+      the raw node.js request object received from the HTTP server callback instead of the processed
+      hapi request object
 - `async validateFunc` - an optional session validation function used to validate the content of the
   session cookie on each request. Used to verify that the internal session state is still valid
   (e.g. user account still exists). The function has the signature `function(request, session)`
@@ -81,121 +84,173 @@ registered more than once.
 
 const Hapi = require('hapi');
 
-let uuid = 1;       // Use seq instead of proper unique identifiers for demo only
 
-const users = {
-    john: {
-        id: 'john',
+const internals = {};
+
+
+// Simulate database for demo
+
+internals.users = [
+    {
+        id: 1,
+        name: 'john',
         password: 'password',
-        name: 'John Doe'
+    },
+];
+
+
+internals.renderHtml = {
+    login: (message) => {
+
+        return `
+    <html><head><title>Login page</title></head><body>
+    ${message ? '<h3>' + message + '</h3><br/>' : ''}
+    <form method="post" action="/login">
+      Username: <input type="text" name="username"><br>
+      Password: <input type="password" name="password"><br/>
+    <input type="submit" value="Login"></form>
+    </body></html>
+      `;
+    },
+    home: (name) => {
+
+        return `
+    <html><head><title>Login page</title></head><body>
+    <h3>Welcome ${name}! You are logged in!</h3>
+    <form method="get" action="/logout">
+      <input type="submit" value="Logout">
+    </form>
+    </body></html>
+      `;
     }
 };
 
-const home = (request, h) => {
 
-    return '<html><head><title>Login page</title></head><body><h3>Welcome ' +
-      request.auth.credentials.name +
-      '!</h3><br/><form method="get" action="/logout">' +
-      '<input type="submit" value="Logout">' +
-      '</form></body></html>';
-};
+internals.server = async function () {
 
-const login = async (request, h) => {
+    const server = Hapi.server({ port: 8000 });
 
-    if (request.auth.isAuthenticated) {
-        return h.redirect('/');
-    }
-
-    let message = '';
-    let account = null;
-
-    if (request.method === 'post') {
-
-        if (!request.payload.username ||
-            !request.payload.password) {
-
-            message = 'Missing username or password';
-        }
-        else {
-            account = users[request.payload.username];
-            if (!account ||
-                account.password !== request.payload.password) {
-
-                message = 'Invalid username or password';
-            }
-        }
-    }
-
-    if (request.method === 'get' ||
-        message) {
-
-        return '<html><head><title>Login page</title></head><body>' +
-            (message ? '<h3>' + message + '</h3><br/>' : '') +
-            '<form method="post" action="/login">' +
-            'Username: <input type="text" name="username"><br>' +
-            'Password: <input type="password" name="password"><br/>' +
-            '<input type="submit" value="Login"></form></body></html>';
-    }
-
-    const sid = String(++uuid);
-
-    await request.server.app.cache.set(sid, { account }, 0);
-    request.cookieAuth.set({ sid });
-
-    return h.redirect('/');
-};
-
-const logout = (request, h) => {
-
-    request.cookieAuth.clear();
-    return h.redirect('/');
-};
-
-const server = Hapi.server({ port: 8000 });
-
-exports.start = async () => {
-
-    await server.register(require('../'));
-
-    const cache = server.cache({ segment: 'sessions', expiresIn: 3 * 24 * 60 * 60 * 1000 });
-    server.app.cache = cache;
+    await server.register(require('hapi-auth-cookie'));
 
     server.auth.strategy('session', 'cookie', {
-        password: 'password-should-be-32-characters',
-        cookie: 'sid-example',
+
+        cookie: {
+            name: 'sid-example',
+
+            // Don't forget to change it to your own secret password!
+            password: 'password-should-be-32-characters',
+
+            // For working via HTTP in localhost
+            isSecure: false
+        },
+
         redirectTo: '/login',
-        isSecure: false,
+
         validateFunc: async (request, session) => {
 
-            const cached = await cache.get(session.sid);
-            const out = {
-                valid: !!cached
-            };
+            const account = internals.users.find((user) => (user.id = session.id));
 
-            if (out.valid) {
-                out.credentials = cached.account;
+            if (!account) {
+                // Must return { valid: false } for invalid cookies
+                return { valid: false };
             }
 
-            return out;
+            return { valid: true, credentials: account };
         }
     });
 
     server.auth.default('session');
 
     server.route([
-        { method: 'GET', path: '/', config: { handler: home } },
-        { method: ['GET', 'POST'], path: '/login', config: { handler: login, auth: { mode: 'try' }, plugins: { 'hapi-auth-cookie': { redirectTo: false } } } },
-        { method: 'GET', path: '/logout', config: { handler: logout } }
+        {
+            method: 'GET',
+            path: '/',
+            options: {
+                handler: (request, h) => {
+
+                    return internals.renderHtml.home(request.auth.credentials.name);
+                }
+            }
+        },
+        {
+            method: 'GET',
+            path: '/login',
+            options: {
+                auth: {
+                    mode: 'try'
+                },
+                plugins: {
+                    'hapi-auth-cookie': {
+                        redirectTo: false
+                    }
+                },
+                handler: async (request, h) => {
+
+                    if (request.auth.isAuthenticated) {
+                        return h.redirect('/');
+                    }
+
+                    return internals.renderHtml.login();
+                }
+            }
+        },
+        {
+            method: 'POST',
+            path: '/login',
+            options: {
+                auth: {
+                    mode: 'try'
+                },
+                handler: async (request, h) => {
+
+                    const { username, password } = request.payload;
+                    if (!username || !password) {
+                        return internals.renderHtml.login('Missing username or password');
+                    }
+
+                    // Try to find user with given credentials
+
+                    const account = internals.users.find(
+                        (user) => user.name === username && user.password === password
+                    );
+
+                    if (!account) {
+                        return internals.renderHtml.login('Invalid username or password');
+                    }
+
+                    request.cookieAuth.set({ id: account.id });
+                    return h.redirect('/');
+                }
+            }
+        },
+        {
+            method: 'GET',
+            path: '/logout',
+            options: {
+                handler: (request, h) => {
+
+                    request.cookieAuth.clear();
+                    return h.redirect('/');
+                }
+            }
+        }
     ]);
 
     await server.start();
-
-    console.log('Server ready');
+    console.log(`Server started at: ${server.info.uri}`);
 };
 
-exports.start().catch((err) => {
 
-    console.log(err.stack);
-    process.exit(1);
-});
+internals.start = async function() {
+
+    try {
+        await internals.server();
+    }
+    catch (err) {
+        console.error(err.stack);
+        process.exit(1);
+    }
+};
+
+internals.start();
 ```
